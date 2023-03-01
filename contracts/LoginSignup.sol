@@ -23,4 +23,7 @@ contract LoginSignup {
         require(keccak256(abi.encodePacked(user.username)) != keccak256(abi.encodePacked("")), "Username not found");
         return user.hashedPassword == keccak256(abi.encodePacked(_password));
     }
+    function getUsername(string memory _username) public view returns(string memory) {
+        return users[_username].username;
+    }
 }
