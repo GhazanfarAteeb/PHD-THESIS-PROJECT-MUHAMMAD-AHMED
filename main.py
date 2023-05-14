@@ -66,11 +66,12 @@ def register():
 
         # compiling the blockchain contract
 
-        receipt = login_signup_contract.register(w3, request.form['account_address'], request.form["private_key"],
-                                                 request.form["username"], request.form["password"])
+        receipt, receipt2 = login_signup_contract.register(w3, request.form['account_address'],
+                                                                   request.form["private_key"],
+                                                                   request.form["username"], request.form["password"])
         # adding the user to the database
         conn.execute(
-            '''INSERT INTO users (USERNAME, PASSWORD, PRIVATE_KEY, ACCOUNT_ADDRESS, CONTRACT_ADDRESS) 
+            '''INSERT INTO users (USERNAME, PASSWORD, PRIVATE_KEY, ACCOUNT_ADDRESS, CONTRACT_ADDRESS)
             VALUES (?, ?, ?, ?, ?)''',
             (request.form["username"],
              request.form["password"],
@@ -78,9 +79,40 @@ def register():
              request.form["account_address"],
              receipt['contractAddress'])
         )
-    conn.commit()
+    # conn.commit()
     return "sent", 200
 
+@app.route("/register_via_ibs", methods=["POST"])
+def registerViaIBS():
+    conn = connect_db()
+    cursor = conn.cursor()
+    # checking if the user already exists in the database or not
+    cursor.execute("SELECT * FROM users WHERE USERNAME=? AND PASSWORD=?",
+                   (request.form['username'], request.form['password']))
+    records = cursor.fetchall()
+    if records.__len__() >= 1:
+        return "already exist", 200
+    else:
+        # if the user does not exist then the contract will be created on the user registration and the signup method
+        # will be called to add the user to the blockchain network
+
+        # compiling the blockchain contract
+
+        receipt, receipt2 = login_signup_contract.register(w3, request.form['account_address'],
+                                                                   request.form["private_key"],
+                                                                   request.form["username"], request.form["password"])
+        # adding the user to the database
+        conn.execute(
+            '''INSERT INTO users (USERNAME, PASSWORD, PRIVATE_KEY, ACCOUNT_ADDRESS, CONTRACT_ADDRESS)
+            VALUES (?, ?, ?, ?, ?)''',
+            (request.form["username"],
+             request.form["password"],
+             request.form["private_key"],
+             request.form["account_address"],
+             receipt['contractAddress'])
+        )
+    # conn.commit()
+    return "sent", 200
 
 @app.route("/login", methods=["POST"])
 def login():
@@ -99,6 +131,49 @@ def login():
 
         # getting the contract address from the database
         login_signup_tx_receipt = login_signup_contract.login(record=record, w3=w3)
+        # noting the time after the transaction is completed
+        contract_transaction_time = time.time()
+        # getting the transaction hash for the mined block
+        tx_hash = hexbytes.HexBytes(login_signup_tx_receipt['transactionHash'])
+        # response to return
+        response = {
+            'id': record[0],
+            'username': record[1],
+            'account_address': record[4],
+            'contract_address': record[5],
+            'block_number': login_signup_tx_receipt['blockNumber'],
+            'from': login_signup_tx_receipt['from'],
+            'to': login_signup_tx_receipt['to'],
+            'gas_used': login_signup_tx_receipt['gasUsed'],
+            'cumulative_gas_used': login_signup_tx_receipt['cumulativeGasUsed'],
+            'transaction_hash': tx_hash.hex().__str__(),
+            'start_time': start_time * 1000,
+            'contract_compiled_time_taken': ((contract_compile_time - start_time) * 1000),
+            'contract_transaction_time_taken': ((contract_transaction_time - contract_compile_time) * 1000)
+        }
+        # returning the response
+        return response, 200
+    else:
+        return "issue occurred"
+
+
+@app.route("/login_via_ibs", methods=["POST"])
+def loginViaIBS():
+    conn = connect_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM users WHERE username=? AND password=?",
+                   (request.form['username'], request.form['password']))
+    records = cursor.fetchall()
+    if records.__len__() == 1:
+        # noting the start time for the execution
+        start_time = time.time()
+        # getting the database record
+        record = records[0]
+        # noting the compiling time of the contract
+        contract_compile_time = time.time()
+
+        # getting the contract address from the database
+        login_signup_tx_receipt = login_signup_contract.loginWithDBDH(record=record, w3=w3)
         # noting the time after the transaction is completed
         contract_transaction_time = time.time()
         # getting the transaction hash for the mined block

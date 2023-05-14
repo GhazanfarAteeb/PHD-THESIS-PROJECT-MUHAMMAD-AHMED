@@ -1,6 +1,7 @@
 import os
 
 import solcx
+from eth_hash.backends.pycryptodome import keccak256
 from solcx import set_solc_version, compile_source
 from web3 import Web3
 from werkzeug.utils import secure_filename
@@ -72,7 +73,7 @@ class FileContract:
         contract = w3.eth.contract(address=file_address, abi=self.__abi)
         with open(os.path.join(upload_folder, record[1]), "rb") as file:
             file_bytes = file.read()
-        file_hash = Web3.sha3(file_bytes).hex()
+        file_hash = keccak256(file_bytes).hex()
 
         stored_hash = contract.functions.getHash().call({'from': file_owner})
         return file_hash != stored_hash
