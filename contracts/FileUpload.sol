@@ -17,6 +17,7 @@ contract FileUpload {
         uint chunkSize;
         uint numChunks;
     }
+
     struct File {
         bytes32 hash;
         address owner;
@@ -119,6 +120,44 @@ contract FileUpload {
         require(file.hash != bytes32(0), "File does not exist");
 
         return file.hash;
+    }
+
+    function uploadFileWitHVTT(bytes memory file, bytes32[] memory HVTLeaves) payable public returns (bytes32) {
+        // Compute the hash of the file
+        bytes32 fileHash = keccak256(file);
+
+        // Check if the file already exists
+        require(files[fileHash].hash == bytes32(0), "File already exists");
+
+        // Perform HVT verification
+        bytes32 HVTRoot = calculateHVTRoot(HVTLeaves);
+        // Create a new file structure
+        File memory newFile = File({
+        hash : fileHash,
+        owner : msg.sender,
+        timestamp : block.timestamp
+        });
+
+        // Save the file
+        files[fileHash] = newFile;
+
+        // Emit the FileUploaded event
+        emit FileUploadedToBlockchain(msg.sender, fileHash, block.timestamp);
+
+        return fileHash;
+    }
+
+    function calculateHVTRoot(bytes32[] memory leaves) internal pure returns (bytes32) {
+        bytes32 HVTRoot = leaves[0];
+        for (uint256 i = 1; i < leaves.length; i++) {
+            HVTRoot = xorBytes32(HVTRoot, leaves[i]);
+        }
+
+        return HVTRoot;
+    }
+
+    function xorBytes32(bytes32 a, bytes32 b) internal pure returns (bytes32) {
+        return bytes32(uint256(a) ^ uint256(b));
     }
 
 }

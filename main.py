@@ -67,8 +67,8 @@ def register():
         # compiling the blockchain contract
 
         receipt, receipt2 = login_signup_contract.register(w3, request.form['account_address'],
-                                                                   request.form["private_key"],
-                                                                   request.form["username"], request.form["password"])
+                                                           request.form["private_key"],
+                                                           request.form["username"], request.form["password"])
         # adding the user to the database
         conn.execute(
             '''INSERT INTO users (USERNAME, PASSWORD, PRIVATE_KEY, ACCOUNT_ADDRESS, CONTRACT_ADDRESS)
@@ -81,6 +81,7 @@ def register():
         )
     # conn.commit()
     return "sent", 200
+
 
 @app.route("/register_via_ibs", methods=["POST"])
 def registerViaIBS():
@@ -99,8 +100,8 @@ def registerViaIBS():
         # compiling the blockchain contract
 
         receipt, receipt2 = login_signup_contract.register(w3, request.form['account_address'],
-                                                                   request.form["private_key"],
-                                                                   request.form["username"], request.form["password"])
+                                                           request.form["private_key"],
+                                                           request.form["username"], request.form["password"])
         # adding the user to the database
         conn.execute(
             '''INSERT INTO users (USERNAME, PASSWORD, PRIVATE_KEY, ACCOUNT_ADDRESS, CONTRACT_ADDRESS)
@@ -113,6 +114,7 @@ def registerViaIBS():
         )
     # conn.commit()
     return "sent", 200
+
 
 @app.route("/login", methods=["POST"])
 def login():
@@ -240,6 +242,30 @@ def upload_file():
             record = records[0]
             file_contract.upload_file_simple(uploaded_file=uploaded_file, w3=w3, record=record,
                                              upload_folder=app.config['UPLOAD_FOLDER'])
+            # ADDING BLOCKCHAIN TRANSACTION AND SQLITE DATABASE RECORD FOR FILE UPLOAD
+
+        return {'message': 'File successfully uploaded'}, 201
+
+
+@app.route('/upload_via_hvt', methods=['POST'])
+def upload_file_via_hvt():
+    if 'file' not in request.files:
+        return {'message': 'No file part in the request'}, 400
+    uploaded_file = request.files['file']
+    if uploaded_file.filename == '':
+        return {'message': 'No file selected for uploading'}, 400
+    if uploaded_file:
+        conn = connect_db()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM USERS WHERE USERNAME=? ",
+                       (request.form['username'],))
+        records = cursor.fetchall()
+        if records.__len__() == 1:
+            # noting the start time for the execution
+            # getting the database record
+            record = records[0]
+            file_contract.upload_file_with_HVT(uploaded_file=uploaded_file, w3=w3, record=record,
+                                               upload_folder=app.config['UPLOAD_FOLDER'])
             # ADDING BLOCKCHAIN TRANSACTION AND SQLITE DATABASE RECORD FOR FILE UPLOAD
 
         return {'message': 'File successfully uploaded'}, 201
