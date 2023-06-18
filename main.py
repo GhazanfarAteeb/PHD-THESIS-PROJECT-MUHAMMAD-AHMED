@@ -259,30 +259,6 @@ def loginViaIBS():
         return "issue occurred"
 
 
-@app.route('/upload_via_shredding', methods=['POST'])
-def upload_file_via_shredding():
-    if 'file' not in request.files:
-        return {'message': 'No file part in the request'}, 400
-    uploaded_file = request.files['file']
-    if uploaded_file.filename == '':
-        return {'message': 'No file selected for uploading'}, 400
-    if uploaded_file:
-        conn = connect_db()
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM USERS WHERE USERNAME=? ", (request.form['username'],))
-        records = cursor.fetchall()
-        if records.__len__() == 1:
-            record = records[0]
-
-            details, receipt = file_contract.upload_file_via_shredding(uploaded_file=uploaded_file, w3=w3,
-                                                                       record=record,
-                                                                       upload_folder=str(app.config['UPLOAD_FOLDER']))
-            tx_hash = hexbytes.HexBytes(receipt['transactionHash'])
-            insert_file_record(uploaded_file.filename, tx_hash, receipt['contractAddress'], details,
-                               receipt['blockHash'], record[0])
-    return {'message': 'File successfully uploaded'}, 201
-
-
 @app.route('/upload_file', methods=['POST'])
 def upload_file():
     if 'file' not in request.files:
@@ -291,20 +267,86 @@ def upload_file():
     if uploaded_file.filename == '':
         return {'message': 'No file selected for uploading'}, 400
     if uploaded_file:
+        response = ""
         conn = connect_db()
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM USERS WHERE USERNAME=? ",
                        (request.form['username'],))
         records = cursor.fetchall()
         if records.__len__() == 1:
+            start_time = time.time()
             file_contract.compile_contract()
             record = records[0]
+            contract_compile_time = time.time()
             details, receipt = file_contract.upload_file_simple(uploaded_file=uploaded_file, w3=w3, record=record,
                                                                 upload_folder=app.config['UPLOAD_FOLDER'])
             tx_hash = hexbytes.HexBytes(receipt['transactionHash'])
             insert_file_record(uploaded_file.filename, tx_hash, receipt['contractAddress'], details,
                                receipt['blockHash'], record[0])
-        return {'message': 'File successfully uploaded'}, 201
+            contract_transaction_time = time.time()
+            cursor.execute("SELECT * FROM FILE_UPLOAD WHERE FILE_CONTRACT=?", (receipt['contractAddress'],))
+            recs = cursor.fetchall()
+            rec = recs[0]
+            response = {
+                'id': rec[0],
+                'uid': record[0],
+                'account_address': record[4],
+                'contract_address': receipt['contractAddress'],
+                'block_number': receipt['blockNumber'],
+                'from': receipt['from'],
+                'gas_used': receipt['gasUsed'],
+                'cumulative_gas_used': receipt['cumulativeGasUsed'],
+                'transaction_hash': tx_hash.hex().__str__(),
+                'start_time': start_time * 1000,
+                'contract_compiled_time_taken': ((contract_compile_time - start_time) * 1000),
+                'contract_transaction_time_taken': ((contract_transaction_time - contract_compile_time) * 1000)
+            }
+        return response, 200
+
+
+@app.route('/upload_via_shredding', methods=['POST'])
+def upload_file_via_shredding():
+    if 'file' not in request.files:
+        return {'message': 'No file part in the request'}, 400
+    uploaded_file = request.files['file']
+    if uploaded_file.filename == '':
+        return {'message': 'No file selected for uploading'}, 400
+    if uploaded_file:
+        start_time = time.time()
+        response = ""
+        conn = connect_db()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM USERS WHERE USERNAME=? ", (request.form['username'],))
+        records = cursor.fetchall()
+        if records.__len__() == 1:
+            record = records[0]
+            file_contract.compile_contract()
+            contract_compile_time = time.time()
+            details, receipt = file_contract.upload_file_via_shredding(uploaded_file=uploaded_file, w3=w3,
+                                                                       record=record,
+                                                                       upload_folder=str(app.config['UPLOAD_FOLDER']))
+            tx_hash = hexbytes.HexBytes(receipt['transactionHash'])
+            insert_file_record(uploaded_file.filename, tx_hash, receipt['contractAddress'], details,
+                               receipt['blockHash'], record[0])
+            contract_transaction_time = time.time()
+            cursor.execute("SELECT * FROM FILE_UPLOAD WHERE FILE_CONTRACT=?", (receipt['contractAddress'],))
+            recs = cursor.fetchall()
+            rec = recs[0]
+            response = {
+                'id': rec[0],
+                'uid': record[0],
+                'account_address': record[4],
+                'contract_address': receipt['contractAddress'],
+                'block_number': receipt['blockNumber'],
+                'from': receipt['from'],
+                'gas_used': receipt['gasUsed'],
+                'cumulative_gas_used': receipt['cumulativeGasUsed'],
+                'transaction_hash': tx_hash.hex().__str__(),
+                'start_time': start_time * 1000,
+                'contract_compiled_time_taken': ((contract_compile_time - start_time) * 1000),
+                'contract_transaction_time_taken': ((contract_transaction_time - contract_compile_time) * 1000)
+            }
+        return response, 200
 
 
 @app.route('/upload_via_hvt', methods=['POST'])
@@ -315,19 +357,43 @@ def upload_file_via_hvt():
     if uploaded_file.filename == '':
         return {'message': 'No file selected for uploading'}, 400
     if uploaded_file:
+        response = ""
         conn = connect_db()
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM USERS WHERE USERNAME=? ",
                        (request.form['username'],))
         records = cursor.fetchall()
         if records.__len__() == 1:
+            start_time = time.time()
             record = records[0]
-            details, receipt = file_contract.upload_file_with_HVT(uploaded_file=uploaded_file, w3=w3, record=record,
-                                                                  upload_folder=app.config['UPLOAD_FOLDER'])
+            file_contract.compile_contract()
+            contract_compile_time = time.time()
+            details, receipt = file_contract.upload_file_with_HVT(
+                uploaded_file=uploaded_file, w3=w3, record=record,
+                upload_folder=app.config['UPLOAD_FOLDER']
+            )
             tx_hash = hexbytes.HexBytes(receipt['transactionHash'])
             insert_file_record(uploaded_file.filename, tx_hash, receipt['contractAddress'], details,
                                receipt['blockHash'], record[0])
-        return {'message': 'File successfully uploaded'}, 201
+            contract_transaction_time = time.time()
+            cursor.execute("SELECT * FROM FILE_UPLOAD WHERE FILE_CONTRACT=?", (receipt['contractAddress'],))
+            recs = cursor.fetchall()
+            rec = recs[0]
+            response = {
+                'id': rec[0],
+                'uid': record[0],
+                'account_address': record[4],
+                'contract_address': receipt['contractAddress'],
+                'block_number': receipt['blockNumber'],
+                'from': receipt['from'],
+                'gas_used': receipt['gasUsed'],
+                'cumulative_gas_used': receipt['cumulativeGasUsed'],
+                'transaction_hash': tx_hash.hex().__str__(),
+                'start_time': start_time * 1000,
+                'contract_compiled_time_taken': ((contract_compile_time - start_time) * 1000),
+                'contract_transaction_time_taken': ((contract_transaction_time - contract_compile_time) * 1000)
+            }
+        return response, 200
 
 
 @app.route('/upload_via_shredding_and_hvt', methods=['POST'])
@@ -338,21 +404,44 @@ def upload_file_via_shredding_and_hvt():
     if uploaded_file.filename == '':
         return {'message': 'No file selected for uploading'}, 400
     if uploaded_file:
+        response = ""
         conn = connect_db()
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM USERS WHERE USERNAME=? ",
                        (request.form['username'],))
         records = cursor.fetchall()
         if records.__len__() == 1:
+            start_time = time.time()
             record = records[0]
-            details, receipt = file_contract.upload_file_via_shredding_and_hvt(uploaded_file=uploaded_file, w3=w3,
-                                                                               record=record,
-                                                                               upload_folder=app.config[
-                                                                                   'UPLOAD_FOLDER'])
+            file_contract.compile_contract()
+            contract_compile_time = time.time()
+            details, receipt = file_contract.upload_file_via_shredding_and_hvt(
+                uploaded_file=uploaded_file, w3=w3,
+                record=record,
+                upload_folder=app.config['UPLOAD_FOLDER']
+            )
             tx_hash = hexbytes.HexBytes(receipt['transactionHash'])
             insert_file_record(uploaded_file.filename, tx_hash, receipt['contractAddress'], details,
                                receipt['blockHash'], record[0])
-        return {'message': 'File successfully uploaded'}, 201
+            contract_transaction_time = time.time()
+            cursor.execute("SELECT * FROM FILE_UPLOAD WHERE FILE_CONTRACT=?", (receipt['contractAddress'],))
+            recs = cursor.fetchall()
+            rec = recs[0]
+            response = {
+                'id': rec[0],
+                'uid': record[0],
+                'account_address': record[4],
+                'contract_address': receipt['contractAddress'],
+                'block_number': receipt['blockNumber'],
+                'from': receipt['from'],
+                'gas_used': receipt['gasUsed'],
+                'cumulative_gas_used': receipt['cumulativeGasUsed'],
+                'transaction_hash': tx_hash.hex().__str__(),
+                'start_time': start_time * 1000,
+                'contract_compiled_time_taken': ((contract_compile_time - start_time) * 1000),
+                'contract_transaction_time_taken': ((contract_transaction_time - contract_compile_time) * 1000)
+            }
+        return response, 200
 
 
 @app.route('/check', methods=['POST'])

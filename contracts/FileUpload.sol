@@ -37,14 +37,13 @@ contract FileUpload {
     mapping(bytes32 => FileChunked) public filesChunked;
     mapping(address => uint) public fileCount;
     mapping(bytes32 => mapping(uint => Chunk)) public chunks;
-    mapping(bytes32 => FileUpload) public fileUploads; // New mapping for file uploads
+    mapping(bytes32 => FileUpload) public fileUploads;
 
 
     event ChunkUploaded(address indexed owner, bytes32 indexed hash, uint chunkIndex, uint timestamp);
     event FileUploadedToBlockchain(address indexed owner, bytes32 hash, uint timestamp);
     event FileUploaded(address indexed owner, bytes32 indexed hash, uint timestamp, uint fileSize, uint chunkSize);
-    event FileUploadCompleted(address indexed owner, bytes32 indexed hash, uint timestamp); // New event for file upload completion
-
+    event FileUploadCompleted(address indexed owner, bytes32 indexed hash, uint timestamp);
 
 
     function uploadFileViaHvtAndShredding(bytes memory file, bytes32[] memory HVTLeaves, uint256 chunkSize) payable public returns (bytes32) {
@@ -117,7 +116,7 @@ contract FileUpload {
         return fileHash;
     }
 
-    function uploadFileWitHVT(bytes memory file, bytes32[] memory HVTLeaves) payable public returns (bytes32) {
+    function uploadFileWithHVT(bytes memory file, bytes32[] memory HVTLeaves) payable public returns (bytes32) {
         // Compute the hash of the file
         bytes32 fileHash = keccak256(file);
 
