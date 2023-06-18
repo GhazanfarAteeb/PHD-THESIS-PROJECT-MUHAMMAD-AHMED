@@ -14,9 +14,8 @@ class FileContract:
         self.__interface = None
         self.__bin = None
         self.__abi = None
-        self.__compile_contract()
 
-    def __compile_contract(self):
+    def compile_contract(self):
         solcx.install_solc('0.8.0')
         set_solc_version("0.8.0")
 
@@ -31,14 +30,11 @@ class FileContract:
         filename = secure_filename(uploaded_file.filename)
         receipt = self.__create_block_transaction(uploaded_file=uploaded_file, w3=w3, record=record,
                                                   upload_folder=upload_folder, filename=filename)
-
         with open(os.path.join(upload_folder, filename), "rb") as file:
-            # Read the file as bytes
             file_bytes = file.read()
-            file_upload_contract_2 = w3.eth.contract(address=receipt['contractAddress'],
-                                                     abi=self.__abi)
+            file_upload_contract_2 = w3.eth.contract(address=receipt['contractAddress'], abi=self.__abi)
             details = file_upload_contract_2.functions.uploadFileSimple(file_bytes).call()
-            return details
+            return details, receipt
 
     def __create_block_transaction(self, uploaded_file, filename, w3, record, upload_folder):
         uploaded_file.save(os.path.join(upload_folder, filename))
@@ -57,7 +53,6 @@ class FileContract:
 
     def upload_file_via_shredding(self, uploaded_file, w3, record, upload_folder):
         filename = secure_filename(uploaded_file.filename)
-        # ADDING BLOCKCHAIN TRANSACTION AND SQLITE DATABASE RECORD FOR FILE UPLOAD
         receipt = self.__create_block_transaction(uploaded_file=uploaded_file, filename=filename, w3=w3, record=record,
                                                   upload_folder=upload_folder)
 
@@ -67,25 +62,21 @@ class FileContract:
         file_upload_contract_2 = w3.eth.contract(address=receipt['contractAddress'],
                                                  abi=self.__abi)
         details = file_upload_contract_2.functions.uploadFileViaShredding(file_bytes, chunk_size).call()
-        return details
+        return details, receipt
 
     def upload_file_with_HVT(self, uploaded_file, w3, record, upload_folder):
         filename = secure_filename(uploaded_file.filename)
         receipt = self.__create_block_transaction(uploaded_file=uploaded_file, w3=w3, record=record,
                                                   upload_folder=upload_folder, filename=filename)
-
         with open(os.path.join(upload_folder, filename), "rb") as file:
-            # Read the file as bytes
             file_bytes = file.read()
-
-            # Call the contract function with HVT leaves
             file_upload_contract = w3.eth.contract(address=receipt['contractAddress'], abi=self.__abi)
             details = file_upload_contract.functions.uploadFileWithHVT(
                 file_bytes,
                 self.__compute_HVT_leaves(file_bytes)
             ).call()
 
-        return details
+        return details, receipt
 
     def upload_file_via_shredding_and_hvt(self, uploaded_file, w3, record, upload_folder):
         filename = secure_filename(uploaded_file.filename)
@@ -93,21 +84,15 @@ class FileContract:
                                                   upload_folder=upload_folder, filename=filename)
 
         with open(os.path.join(upload_folder, filename), "rb") as file:
-            # Read the file as bytes
             file_bytes = file.read()
-
-            # Compute HVT leaves
             leaves = self.__compute_HVT_leaves(file_bytes)
 
-            # Convert leaves to bytes32 array
             HVT_leaves = [bytes(leaf) for leaf in leaves]
-
-            # Call the contract function with file bytes, HVT leaves, and chunk size
             file_upload_contract = w3.eth.contract(address=receipt['contractAddress'], abi=self.__abi)
-            chunk_size = 1024  # Set the desired chunk size here
-            details = file_upload_contract.functions.uploadFileViaHvtAndShredding(file_bytes, HVT_leaves, chunk_size).call()
-
-        return details
+            chunk_size = 1024
+            details = file_upload_contract.functions.uploadFileViaHvtAndShredding(file_bytes, HVT_leaves,
+                                                                                  chunk_size).call()
+        return details, receipt
 
     def __compute_HVT_leaves(self, file_bytes):
         chunk_size = 32

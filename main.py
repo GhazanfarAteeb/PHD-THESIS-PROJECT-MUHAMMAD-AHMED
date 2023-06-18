@@ -47,29 +47,42 @@ def connect_db():
     return conn
 
 
-# Compile the contract
+def insert_file_record(file_name, transaction_hash, file_contract, file_bytes, file_hash, uploaded_by):
+    conn = connect_db()
+    cursor = conn.cursor()
+    print('HERE')
+    # Check if the user exists
+    cursor.execute("SELECT * FROM USERS WHERE ID=?", (uploaded_by,))
+    record = cursor.fetchone()
+    if not record:
+        return {'message': 'User does not exist'}, 404
+
+    # Insert the file record into the database
+    conn.execute(
+        "INSERT INTO FILE_UPLOAD(FILE_NAME, TRANSACTION_HASH, FILE_CONTRACT, FILE_BYTES, FILE_HASH, UPLOADED_BY)"
+        " VALUES (?, ?, ?, ?, ?, ?)",
+        (file_name, transaction_hash, file_contract, file_bytes, file_hash, uploaded_by))
+    conn.commit()
 
 
 @app.route("/register", methods=["POST"])
 def register():
     conn = connect_db()
     cursor = conn.cursor()
-    # checking if the user already exists in the database or not
     cursor.execute("SELECT * FROM users WHERE USERNAME=? AND PASSWORD=?",
                    (request.form['username'], request.form['password']))
     records = cursor.fetchall()
     if records.__len__() >= 1:
         return "already exist", 200
     else:
-        # if the user does not exist then the contract will be created on the user registration and the signup method
-        # will be called to add the user to the blockchain network
-
-        # compiling the blockchain contract
-
+        response = ""
+        start_time = time.time()
+        login_signup_contract.compile_contract()
+        contract_compile_time = time.time()
         receipt, receipt2 = login_signup_contract.register(w3, request.form['account_address'],
                                                            request.form["private_key"],
                                                            request.form["username"], request.form["password"])
-        # adding the user to the database
+        contract_transaction_time = time.time()
         conn.execute(
             '''INSERT INTO users (USERNAME, PASSWORD, PRIVATE_KEY, ACCOUNT_ADDRESS, CONTRACT_ADDRESS)
             VALUES (?, ?, ?, ?, ?)''',
@@ -79,30 +92,59 @@ def register():
              request.form["account_address"],
              receipt['contractAddress'])
         )
-    # conn.commit()
-    return "sent", 200
+        conn.commit()
+        cursor.execute("SELECT * FROM users WHERE USERNAME=? AND PASSWORD=?",
+                       (request.form['username'], request.form['password']))
+        records = cursor.fetchall()
+        tx_hash = hexbytes.HexBytes(receipt['transactionHash'])
+        tx_hash2 = hexbytes.HexBytes(receipt2['transactionHash'])
+        if records.__len__() >= 1:
+            record = records[0]
+            response = {
+                'id': record[0],
+                'username': record[1],
+                'account_address': record[4],
+                'contract_address': record[5],
+                'block_number': [
+                    receipt['blockNumber'],
+                    receipt2['blockNumber']
+                ],
+                'from': receipt2['from'],
+                'to': receipt2['to'],
+                'gas_used': [
+                    receipt['gasUsed'],
+                    receipt2['gasUsed']
+                ],
+                'cumulative_gas_used': (receipt['cumulativeGasUsed'] + receipt2['cumulativeGasUsed']),
+                'transaction_hash': [
+                    tx_hash.hex().__str__(),
+                    tx_hash2.hex().__str__()
+                ],
+                'start_time': start_time * 1000,
+                'contract_compiled_time_taken': ((contract_compile_time - start_time) * 1000),
+                'contract_transaction_time_taken': ((contract_transaction_time - contract_compile_time) * 1000)
+            }
+    return response, 200
 
 
 @app.route("/register_via_ibs", methods=["POST"])
 def registerViaIBS():
     conn = connect_db()
     cursor = conn.cursor()
-    # checking if the user already exists in the database or not
     cursor.execute("SELECT * FROM users WHERE USERNAME=? AND PASSWORD=?",
                    (request.form['username'], request.form['password']))
     records = cursor.fetchall()
     if records.__len__() >= 1:
         return "already exist", 200
     else:
-        # if the user does not exist then the contract will be created on the user registration and the signup method
-        # will be called to add the user to the blockchain network
-
-        # compiling the blockchain contract
-
-        receipt, receipt2 = login_signup_contract.register(w3, request.form['account_address'],
-                                                           request.form["private_key"],
-                                                           request.form["username"], request.form["password"])
-        # adding the user to the database
+        response = ""
+        start_time = time.time()
+        login_signup_contract.compile_contract()
+        contract_compile_time = time.time()
+        receipt, receipt2 = login_signup_contract.registerWithDBDH(w3, request.form['account_address'],
+                                                                   request.form["private_key"],
+                                                                   request.form["username"], request.form["password"])
+        contract_transaction_time = time.time()
         conn.execute(
             '''INSERT INTO users (USERNAME, PASSWORD, PRIVATE_KEY, ACCOUNT_ADDRESS, CONTRACT_ADDRESS)
             VALUES (?, ?, ?, ?, ?)''',
@@ -112,8 +154,39 @@ def registerViaIBS():
              request.form["account_address"],
              receipt['contractAddress'])
         )
-    # conn.commit()
-    return "sent", 200
+        conn.commit()
+        cursor.execute("SELECT * FROM users WHERE USERNAME=? AND PASSWORD=?",
+                       (request.form['username'], request.form['password']))
+        records = cursor.fetchall()
+        tx_hash = hexbytes.HexBytes(receipt['transactionHash'])
+        tx_hash2 = hexbytes.HexBytes(receipt2['transactionHash'])
+        if records.__len__() >= 1:
+            record = records[0]
+            response = {
+                'id': record[0],
+                'username': record[1],
+                'account_address': record[4],
+                'contract_address': record[5],
+                'block_number': [
+                    receipt['blockNumber'],
+                    receipt2['blockNumber']
+                ],
+                'from': receipt2['from'],
+                'to': receipt2['to'],
+                'gas_used': [
+                    receipt['gasUsed'],
+                    receipt2['gasUsed']
+                ],
+                'cumulative_gas_used': (receipt['cumulativeGasUsed'] + receipt2['cumulativeGasUsed']),
+                'transaction_hash': [
+                    tx_hash.hex().__str__(),
+                    tx_hash2.hex().__str__()
+                ],
+                'start_time': start_time * 1000,
+                'contract_compiled_time_taken': ((contract_compile_time - start_time) * 1000),
+                'contract_transaction_time_taken': ((contract_transaction_time - contract_compile_time) * 1000)
+            }
+    return response, 200
 
 
 @app.route("/login", methods=["POST"])
@@ -124,20 +197,14 @@ def login():
                    (request.form['username'], request.form['password']))
     records = cursor.fetchall()
     if records.__len__() == 1:
-        # noting the start time for the execution
-        start_time = time.time()
-        # getting the database record
-        record = records[0]
-        # noting the compiling time of the contract
-        contract_compile_time = time.time()
 
-        # getting the contract address from the database
+        start_time = time.time()
+        record = records[0]
+        login_signup_contract.compile_contract()
+        contract_compile_time = time.time()
         login_signup_tx_receipt = login_signup_contract.login(record=record, w3=w3)
-        # noting the time after the transaction is completed
         contract_transaction_time = time.time()
-        # getting the transaction hash for the mined block
         tx_hash = hexbytes.HexBytes(login_signup_tx_receipt['transactionHash'])
-        # response to return
         response = {
             'id': record[0],
             'username': record[1],
@@ -153,7 +220,6 @@ def login():
             'contract_compiled_time_taken': ((contract_compile_time - start_time) * 1000),
             'contract_transaction_time_taken': ((contract_transaction_time - contract_compile_time) * 1000)
         }
-        # returning the response
         return response, 200
     else:
         return "issue occurred"
@@ -167,20 +233,12 @@ def loginViaIBS():
                    (request.form['username'], request.form['password']))
     records = cursor.fetchall()
     if records.__len__() == 1:
-        # noting the start time for the execution
         start_time = time.time()
-        # getting the database record
         record = records[0]
-        # noting the compiling time of the contract
         contract_compile_time = time.time()
-
-        # getting the contract address from the database
         login_signup_tx_receipt = login_signup_contract.loginWithDBDH(record=record, w3=w3)
-        # noting the time after the transaction is completed
         contract_transaction_time = time.time()
-        # getting the transaction hash for the mined block
         tx_hash = hexbytes.HexBytes(login_signup_tx_receipt['transactionHash'])
-        # response to return
         response = {
             'id': record[0],
             'username': record[1],
@@ -196,7 +254,6 @@ def loginViaIBS():
             'contract_compiled_time_taken': ((contract_compile_time - start_time) * 1000),
             'contract_transaction_time_taken': ((contract_transaction_time - contract_compile_time) * 1000)
         }
-        # returning the response
         return response, 200
     else:
         return "issue occurred"
@@ -215,12 +272,14 @@ def upload_file_via_shredding():
         cursor.execute("SELECT * FROM USERS WHERE USERNAME=? ", (request.form['username'],))
         records = cursor.fetchall()
         if records.__len__() == 1:
-            # getting the database record
             record = records[0]
 
-            file_contract.upload_file_via_shredding(uploaded_file=uploaded_file, w3=w3, record=record,
-                                                    upload_folder=str(app.config['UPLOAD_FOLDER']))
-
+            details, receipt = file_contract.upload_file_via_shredding(uploaded_file=uploaded_file, w3=w3,
+                                                                       record=record,
+                                                                       upload_folder=str(app.config['UPLOAD_FOLDER']))
+            tx_hash = hexbytes.HexBytes(receipt['transactionHash'])
+            insert_file_record(uploaded_file.filename, tx_hash, receipt['contractAddress'], details,
+                               receipt['blockHash'], record[0])
     return {'message': 'File successfully uploaded'}, 201
 
 
@@ -238,13 +297,13 @@ def upload_file():
                        (request.form['username'],))
         records = cursor.fetchall()
         if records.__len__() == 1:
-            # noting the start time for the execution
-            # getting the database record
+            file_contract.compile_contract()
             record = records[0]
-            file_contract.upload_file_simple(uploaded_file=uploaded_file, w3=w3, record=record,
-                                             upload_folder=app.config['UPLOAD_FOLDER'])
-            # ADDING BLOCKCHAIN TRANSACTION AND SQLITE DATABASE RECORD FOR FILE UPLOAD
-
+            details, receipt = file_contract.upload_file_simple(uploaded_file=uploaded_file, w3=w3, record=record,
+                                                                upload_folder=app.config['UPLOAD_FOLDER'])
+            tx_hash = hexbytes.HexBytes(receipt['transactionHash'])
+            insert_file_record(uploaded_file.filename, tx_hash, receipt['contractAddress'], details,
+                               receipt['blockHash'], record[0])
         return {'message': 'File successfully uploaded'}, 201
 
 
@@ -262,13 +321,12 @@ def upload_file_via_hvt():
                        (request.form['username'],))
         records = cursor.fetchall()
         if records.__len__() == 1:
-            # noting the start time for the execution
-            # getting the database record
             record = records[0]
-            file_contract.upload_file_with_HVT(uploaded_file=uploaded_file, w3=w3, record=record,
-                                               upload_folder=app.config['UPLOAD_FOLDER'])
-            # ADDING BLOCKCHAIN TRANSACTION AND SQLITE DATABASE RECORD FOR FILE UPLOAD
-
+            details, receipt = file_contract.upload_file_with_HVT(uploaded_file=uploaded_file, w3=w3, record=record,
+                                                                  upload_folder=app.config['UPLOAD_FOLDER'])
+            tx_hash = hexbytes.HexBytes(receipt['transactionHash'])
+            insert_file_record(uploaded_file.filename, tx_hash, receipt['contractAddress'], details,
+                               receipt['blockHash'], record[0])
         return {'message': 'File successfully uploaded'}, 201
 
 
@@ -286,21 +344,19 @@ def upload_file_via_shredding_and_hvt():
                        (request.form['username'],))
         records = cursor.fetchall()
         if records.__len__() == 1:
-            # noting the start time for the execution
-            # getting the database record
             record = records[0]
-            file_contract.upload_file_via_shredding_and_hvt(uploaded_file=uploaded_file, w3=w3, record=record,
-                                                            upload_folder=app.config['UPLOAD_FOLDER'])
-            # ADDING BLOCKCHAIN TRANSACTION AND SQLITE DATABASE RECORD FOR FILE UPLOAD
-
+            details, receipt = file_contract.upload_file_via_shredding_and_hvt(uploaded_file=uploaded_file, w3=w3,
+                                                                               record=record,
+                                                                               upload_folder=app.config[
+                                                                                   'UPLOAD_FOLDER'])
+            tx_hash = hexbytes.HexBytes(receipt['transactionHash'])
+            insert_file_record(uploaded_file.filename, tx_hash, receipt['contractAddress'], details,
+                               receipt['blockHash'], record[0])
         return {'message': 'File successfully uploaded'}, 201
 
 
 @app.route('/check', methods=['POST'])
 def check_file():
-    # Compile the smart contract
-
-    # Connect to the database and retrieve the file record
     conn = connect_db()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM FILE_UPLOAD INNER JOIN USERS U on U.USERNAME = FILE_UPLOAD.UPLOADED_BY "
@@ -313,13 +369,9 @@ def check_file():
     record = records[0]
     file_address = record[3]
     file_owner = record[12]
-
-    # Connect to the smart contract and retrieve the file hash
-
     if file_contract.check_file(w3=w3, record=record, file_address=file_address, file_owner=file_owner,
                                 upload_folder=app.config['UPLOAD_FOLDER']):
         return {'error': 'File hash does not match stored hash'}
-
     return {'success': 'File integrity verified', 'owner': record[9], 'timestamp': record[10]}
 
 
