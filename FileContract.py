@@ -27,20 +27,6 @@ class FileContract:
             self.__bin = self.__interface['bin']
             self.__abi = self.__interface['abi']
 
-    def upload_file_via_shredding(self, uploaded_file, w3, record, upload_folder):
-        filename = secure_filename(uploaded_file.filename)
-        # ADDING BLOCKCHAIN TRANSACTION AND SQLITE DATABASE RECORD FOR FILE UPLOAD
-        receipt = self.__create_block_transaction(uploaded_file=uploaded_file, filename=filename, w3=w3, record=record,
-                                                  upload_folder=upload_folder)
-
-        with open(os.path.join(upload_folder, filename), "rb") as file:
-            file_bytes = file.read()
-        chunk_size = 4096  # in bytes
-        file_upload_contract_2 = w3.eth.contract(address=receipt['contractAddress'],
-                                                 abi=self.__abi)
-        details = file_upload_contract_2.functions.uploadFileViaShredding(file_bytes, chunk_size).call()
-        return details
-
     def upload_file_simple(self, uploaded_file, w3, record, upload_folder):
         filename = secure_filename(uploaded_file.filename)
         receipt = self.__create_block_transaction(uploaded_file=uploaded_file, w3=w3, record=record,
@@ -69,14 +55,19 @@ class FileContract:
         file_upload_tx_receipt = w3.eth.waitForTransactionReceipt(file_upload_tx_hash)
         return file_upload_tx_receipt
 
-    def check_file(self, w3, record, file_address, file_owner, upload_folder):
-        contract = w3.eth.contract(address=file_address, abi=self.__abi)
-        with open(os.path.join(upload_folder, record[1]), "rb") as file:
-            file_bytes = file.read()
-        file_hash = keccak256(file_bytes).hex()
+    def upload_file_via_shredding(self, uploaded_file, w3, record, upload_folder):
+        filename = secure_filename(uploaded_file.filename)
+        # ADDING BLOCKCHAIN TRANSACTION AND SQLITE DATABASE RECORD FOR FILE UPLOAD
+        receipt = self.__create_block_transaction(uploaded_file=uploaded_file, filename=filename, w3=w3, record=record,
+                                                  upload_folder=upload_folder)
 
-        stored_hash = contract.functions.getHash().call({'from': file_owner})
-        return file_hash != stored_hash
+        with open(os.path.join(upload_folder, filename), "rb") as file:
+            file_bytes = file.read()
+        chunk_size = 4096  # in bytes
+        file_upload_contract_2 = w3.eth.contract(address=receipt['contractAddress'],
+                                                 abi=self.__abi)
+        details = file_upload_contract_2.functions.uploadFileViaShredding(file_bytes, chunk_size).call()
+        return details
 
     def upload_file_with_HVT(self, uploaded_file, w3, record, upload_folder):
         filename = secure_filename(uploaded_file.filename)
@@ -96,6 +87,28 @@ class FileContract:
 
         return details
 
+    def upload_file_via_shredding_and_hvt(self, uploaded_file, w3, record, upload_folder):
+        filename = secure_filename(uploaded_file.filename)
+        receipt = self.__create_block_transaction(uploaded_file=uploaded_file, w3=w3, record=record,
+                                                  upload_folder=upload_folder, filename=filename)
+
+        with open(os.path.join(upload_folder, filename), "rb") as file:
+            # Read the file as bytes
+            file_bytes = file.read()
+
+            # Compute HVT leaves
+            leaves = self.__compute_HVT_leaves(file_bytes)
+
+            # Convert leaves to bytes32 array
+            HVT_leaves = [bytes(leaf) for leaf in leaves]
+
+            # Call the contract function with file bytes, HVT leaves, and chunk size
+            file_upload_contract = w3.eth.contract(address=receipt['contractAddress'], abi=self.__abi)
+            chunk_size = 1024  # Set the desired chunk size here
+            details = file_upload_contract.functions.uploadFileViaHvtAndShredding(file_bytes, HVT_leaves, chunk_size).call()
+
+        return details
+
     def __compute_HVT_leaves(self, file_bytes):
         chunk_size = 32
         num_leaves = (len(file_bytes) + chunk_size - 1) // chunk_size
@@ -109,3 +122,12 @@ class FileContract:
             leaves.append(leaf)
 
         return leaves
+
+    def check_file(self, w3, record, file_address, file_owner, upload_folder):
+        contract = w3.eth.contract(address=file_address, abi=self.__abi)
+        with open(os.path.join(upload_folder, record[1]), "rb") as file:
+            file_bytes = file.read()
+        file_hash = keccak256(file_bytes).hex()
+
+        stored_hash = contract.functions.getHash().call({'from': file_owner})
+        return file_hash != stored_hash
