@@ -50,7 +50,7 @@ def connect_db():
 def insert_file_record(file_name, transaction_hash, file_contract, file_bytes, file_hash, uploaded_by):
     conn = connect_db()
     cursor = conn.cursor()
-    print('HERE')
+    # print('HERE')
     # Check if the user exists
     cursor.execute("SELECT * FROM USERS WHERE USERNAME=?", (uploaded_by,))
     record = cursor.fetchone()
@@ -461,6 +461,7 @@ def check_file():
 
     verified_files = []
     files_verified_response = []
+    overall_time_taken = time.time()
     # file_contract.check_file(w3=w3, record=record)
     for record in records:
         verification_start_time = time.time()
@@ -470,21 +471,24 @@ def check_file():
         verification_end_time = time.time()
         files_verified_response.append({
             'id': record[0],
-            'uid': record[9],
-            'verification_start_time': verification_start_time,
-            'verification_end_time': verification_end_time,
-            'time_consumed': (verification_end_time - verification_start_time),
+            'uid': record[8],
+            'username':record[9],
+            'verification_start_time': f'{verification_start_time*1000} ms',
+            'verification_end_time': f'{verification_end_time*1000} ms',
+            'time_consumed': f'{(verification_end_time - verification_start_time)*1000} ms',
             'account_address': record[12],
             'file_contract': record[3],
             'user_contract': record[13],
             'is_file_verified': is_verified
         })
-
+    overall_time_taken = time.time() - overall_time_taken
     if verified_files.__len__() != records.__len__():
         return {'message': 'File hash does not match stored hash',
+                'overall_time_taken': f'{overall_time_taken*1000} ms',
                 'data': files_verified_response
                 }
     return {'message': 'File integrity verified',
+            'overall_time_taken': f'{overall_time_taken*1000} ms',
             'data': files_verified_response
             }
 

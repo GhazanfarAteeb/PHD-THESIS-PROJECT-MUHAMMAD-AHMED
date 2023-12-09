@@ -72,8 +72,8 @@ class LoginSignupContract:
         login_signup_signed_tx = w3.eth.account.signTransaction(login_signup_tx, private_key=private_key)
         login_signup_tx_hash = w3.eth.sendRawTransaction(login_signup_signed_tx.rawTransaction)
         login_signup_tx_receipt_2 = w3.eth.waitForTransactionReceipt(login_signup_tx_hash)
-        print(f"receipt_2 = {login_signup_tx_receipt_2}")
-        print(f"receipt_1 = {login_signup_tx_receipt}")
+        # print(f"receipt_2 = {login_signup_tx_receipt_2}")
+        # print(f"receipt_1 = {login_signup_tx_receipt}")
         return login_signup_tx_receipt, login_signup_tx_receipt_2
 
     def loginWithDBDH(self, record, w3):

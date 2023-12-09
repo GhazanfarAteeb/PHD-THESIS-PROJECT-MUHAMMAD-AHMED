@@ -131,5 +131,5 @@ class FileContract:
 
         # Call the checkFile function with the file bytes
         stored_hash = contract.functions.checkFile(record[4]).transact({'from': record[12]})
-        print(stored_hash)
+        # print(stored_hash)
         return stored_hash
