@@ -1,6 +1,7 @@
 import hashlib
 import os
 
+import hexbytes
 import solcx
 from eth_hash.backends.pycryptodome import keccak256
 from solcx import set_solc_version, compile_source
@@ -14,6 +15,7 @@ class FileContract:
         self.__interface = None
         self.__bin = None
         self.__abi = None
+        self.__contract_compiled = False
 
     def compile_contract(self):
         solcx.install_solc('0.8.0')
@@ -25,8 +27,11 @@ class FileContract:
             self.__interface = self.__compiled_contract['<stdin>:FileUpload']
             self.__bin = self.__interface['bin']
             self.__abi = self.__interface['abi']
+            self.__contract_compiled = True
 
     def upload_file_simple(self, uploaded_file, w3, record, upload_folder):
+        if not self.__contract_compiled:
+            self.compile_contract()
         filename = secure_filename(uploaded_file.filename)
         receipt = self.__create_block_transaction(uploaded_file=uploaded_file, w3=w3, record=record,
                                                   upload_folder=upload_folder, filename=filename)
@@ -34,7 +39,8 @@ class FileContract:
             file_bytes = file.read()
             file_upload_contract_2 = w3.eth.contract(address=receipt['contractAddress'], abi=self.__abi)
             details = file_upload_contract_2.functions.uploadFileSimple(file_bytes).call()
-            return details, receipt
+            # print(file_bytes)
+            return details, receipt, file_bytes
 
     def __create_block_transaction(self, uploaded_file, filename, w3, record, upload_folder):
         uploaded_file.save(os.path.join(upload_folder, filename))
@@ -52,6 +58,8 @@ class FileContract:
         return file_upload_tx_receipt
 
     def upload_file_via_shredding(self, uploaded_file, w3, record, upload_folder):
+        if not self.__contract_compiled:
+            self.compile_contract()
         filename = secure_filename(uploaded_file.filename)
         receipt = self.__create_block_transaction(uploaded_file=uploaded_file, filename=filename, w3=w3, record=record,
                                                   upload_folder=upload_folder)
@@ -65,6 +73,8 @@ class FileContract:
         return details, receipt
 
     def upload_file_with_HVT(self, uploaded_file, w3, record, upload_folder):
+        if not self.__contract_compiled:
+            self.compile_contract()
         filename = secure_filename(uploaded_file.filename)
         receipt = self.__create_block_transaction(uploaded_file=uploaded_file, w3=w3, record=record,
                                                   upload_folder=upload_folder, filename=filename)
@@ -79,6 +89,8 @@ class FileContract:
         return details, receipt
 
     def upload_file_via_shredding_and_hvt(self, uploaded_file, w3, record, upload_folder):
+        if not self.__contract_compiled:
+            self.compile_contract()
         filename = secure_filename(uploaded_file.filename)
         receipt = self.__create_block_transaction(uploaded_file=uploaded_file, w3=w3, record=record,
                                                   upload_folder=upload_folder, filename=filename)
@@ -95,6 +107,8 @@ class FileContract:
         return details, receipt
 
     def __compute_HVT_leaves(self, file_bytes):
+        if not self.__contract_compiled:
+            self.compile_contract()
         chunk_size = 32
         num_leaves = (len(file_bytes) + chunk_size - 1) // chunk_size
         leaves = []
@@ -108,11 +122,14 @@ class FileContract:
 
         return leaves
 
-    def check_file(self, w3, record, file_address, file_owner, upload_folder):
-        contract = w3.eth.contract(address=file_address, abi=self.__abi)
-        with open(os.path.join(upload_folder, record[1]), "rb") as file:
-            file_bytes = file.read()
-        file_hash = keccak256(file_bytes).hex()
+    def check_file(self, w3, record):
+        if not self.__contract_compiled:
+            self.compile_contract()
+        contract = w3.eth.contract(address=record[3], abi=self.__abi)
+        # file_bytes = b'\x00' * 32  # Adjust the conversion as per your file format
+        # file_bytes = file_bytes[:len(record[4])] + record[4]
 
-        stored_hash = contract.functions.getHash().call({'from': file_owner})
-        return file_hash != stored_hash
+        # Call the checkFile function with the file bytes
+        stored_hash = contract.functions.checkFile(record[4]).transact({'from': record[12]})
+        print(stored_hash)
+        return stored_hash

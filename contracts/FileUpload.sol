@@ -115,6 +115,7 @@ contract FileUpload {
 
         return fileHash;
     }
+
     function uploadFileWithHVT(bytes memory file, bytes32[] memory HVTLeaves) payable public returns (bytes32) {
         // Compute the hash of the file
         bytes32 fileHash = keccak256(file);
@@ -139,6 +140,7 @@ contract FileUpload {
 
         return fileHash;
     }
+
     function uploadFileViaShredding(bytes memory file, uint256 chunkSize) payable public returns (bytes32) {
         bytes32 fileHash = keccak256(file);
         uint fileSize = file.length;
@@ -182,6 +184,7 @@ contract FileUpload {
 
         return fileHash;
     }
+
     function uploadFileSimple(bytes memory file) payable public returns (bytes32){
         bytes32 fileHash = keccak256(file);
         require(files[fileHash].hash == bytes32(0), "File already exists");
@@ -195,23 +198,25 @@ contract FileUpload {
         emit FileUploadedToBlockchain(msg.sender, fileHash, block.timestamp);
         return fileHash;
     }
-    function checkChunkedFile(bytes memory fileHash) public view returns (bool, address, uint, uint, uint) {
-        FileChunked storage file = filesChunked [keccak256(fileHash)];
-        return (file.hash != bytes32(0), file.owner, file.timestamp, file.fileSize, file.chunkSize);
+
+    function checkChunkedFile(bytes32 fileHash) public view returns (bytes32) {
+        FileChunked storage file = filesChunked [fileHash];
+        return file.hash;
     }
-    function checkFile(bytes32 fileHash) public view returns (bool, address, uint) {
-        File storage file = files[fileHash];
-        return (file.hash != bytes32(0), file.owner, file.timestamp);
+
+    function checkFile(bytes memory fileBytes) public view returns (bytes32) {
+        bytes32 fileBytes32 = keccak256(fileBytes);
+        bytes32 storedHash = files[fileBytes32].hash;
+        if(storedHash == bytes32(0)) {
+            storedHash = checkChunkedFile(fileBytes32);
+        }
+        return storedHash;
     }
+
     function getFileCount(address user) public view returns (uint) {
         return fileCount[user];
     }
-    function getHash(bytes memory fileHash) public view returns (bytes32) {
-        File storage file = files[keccak256(fileHash)];
-        require(file.hash != bytes32(0), "File does not exist");
 
-        return file.hash;
-    }
     function calculateHVTRoot(bytes32[] memory leaves) internal pure returns (bytes32) {
         bytes32 HVTRoot = leaves[0];
         for (uint256 i = 1; i < leaves.length; i++) {
@@ -220,6 +225,7 @@ contract FileUpload {
 
         return HVTRoot;
     }
+
     function xorBytes32(bytes32 a, bytes32 b) internal pure returns (bytes32) {
         return bytes32(uint256(a) ^ uint256(b));
     }

@@ -38,7 +38,7 @@ def connect_db():
             FILE_CONTRACT TEXT NOT NULL,
             FILE_BYTES TEXT NOT NULL,
             FILE_HASH TEXT NOT NULL,
-            UPLOADED_BY INT NOT NULL,
+            UPLOADED_BY TEXT NOT NULL,
             CREATED_AT DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (UPLOADED_BY) REFERENCES USERS(USERNAME)
         );
@@ -52,7 +52,7 @@ def insert_file_record(file_name, transaction_hash, file_contract, file_bytes, f
     cursor = conn.cursor()
     print('HERE')
     # Check if the user exists
-    cursor.execute("SELECT * FROM USERS WHERE ID=?", (uploaded_by,))
+    cursor.execute("SELECT * FROM USERS WHERE USERNAME=?", (uploaded_by,))
     record = cursor.fetchone()
     if not record:
         return {'message': 'User does not exist'}, 404
@@ -278,11 +278,15 @@ def upload_file():
             file_contract.compile_contract()
             record = records[0]
             contract_compile_time = time.time()
-            details, receipt = file_contract.upload_file_simple(uploaded_file=uploaded_file, w3=w3, record=record,
-                                                                upload_folder=app.config['UPLOAD_FOLDER'])
+            details, receipt, file_bytes = file_contract.upload_file_simple(uploaded_file=uploaded_file, w3=w3,
+                                                                            record=record,
+                                                                            upload_folder=app.config['UPLOAD_FOLDER'])
+
+            # print(file_bytes)
             tx_hash = hexbytes.HexBytes(receipt['transactionHash'])
-            insert_file_record(uploaded_file.filename, tx_hash, receipt['contractAddress'], details,
-                               receipt['blockHash'], record[0])
+            # file_name, transaction_hash, file_contract, file_bytes, file_hash, uploaded_by
+            insert_file_record(uploaded_file.filename, tx_hash, receipt['contractAddress'], file_bytes, details,
+                               record[1])
             contract_transaction_time = time.time()
             cursor.execute("SELECT * FROM FILE_UPLOAD WHERE FILE_CONTRACT=?", (receipt['contractAddress'],))
             recs = cursor.fetchall()
@@ -327,7 +331,7 @@ def upload_file_via_shredding():
                                                                        upload_folder=str(app.config['UPLOAD_FOLDER']))
             tx_hash = hexbytes.HexBytes(receipt['transactionHash'])
             insert_file_record(uploaded_file.filename, tx_hash, receipt['contractAddress'], details,
-                               receipt['blockHash'], record[0])
+                               receipt['blockHash'], record[1])
             contract_transaction_time = time.time()
             cursor.execute("SELECT * FROM FILE_UPLOAD WHERE FILE_CONTRACT=?", (receipt['contractAddress'],))
             recs = cursor.fetchall()
@@ -374,7 +378,7 @@ def upload_file_via_hvt():
             )
             tx_hash = hexbytes.HexBytes(receipt['transactionHash'])
             insert_file_record(uploaded_file.filename, tx_hash, receipt['contractAddress'], details,
-                               receipt['blockHash'], record[0])
+                               receipt['blockHash'], record[1])
             contract_transaction_time = time.time()
             cursor.execute("SELECT * FROM FILE_UPLOAD WHERE FILE_CONTRACT=?", (receipt['contractAddress'],))
             recs = cursor.fetchall()
@@ -422,7 +426,7 @@ def upload_file_via_shredding_and_hvt():
             )
             tx_hash = hexbytes.HexBytes(receipt['transactionHash'])
             insert_file_record(uploaded_file.filename, tx_hash, receipt['contractAddress'], details,
-                               receipt['blockHash'], record[0])
+                               receipt['blockHash'], record[1])
             contract_transaction_time = time.time()
             cursor.execute("SELECT * FROM FILE_UPLOAD WHERE FILE_CONTRACT=?", (receipt['contractAddress'],))
             recs = cursor.fetchall()
@@ -452,16 +456,37 @@ def check_file():
                    "WHERE FILE_UPLOAD.UPLOADED_BY = ?", (request.form['username'],))
     records = cursor.fetchall()
 
-    if len(records) != 1:
+    if len(records) < 1:
         return {'error': 'File not found'}
 
-    record = records[0]
-    file_address = record[3]
-    file_owner = record[12]
-    if file_contract.check_file(w3=w3, record=record, file_address=file_address, file_owner=file_owner,
-                                upload_folder=app.config['UPLOAD_FOLDER']):
-        return {'error': 'File hash does not match stored hash'}
-    return {'success': 'File integrity verified', 'owner': record[9], 'timestamp': record[10]}
+    verified_files = []
+    files_verified_response = []
+    # file_contract.check_file(w3=w3, record=record)
+    for record in records:
+        verification_start_time = time.time()
+        is_verified = file_contract.check_file(w3=w3, record=record) != b''
+        if is_verified:
+            verified_files.append(record)
+        verification_end_time = time.time()
+        files_verified_response.append({
+            'id': record[0],
+            'uid': record[9],
+            'verification_start_time': verification_start_time,
+            'verification_end_time': verification_end_time,
+            'time_consumed': (verification_end_time - verification_start_time),
+            'account_address': record[12],
+            'file_contract': record[3],
+            'user_contract': record[13],
+            'is_file_verified': is_verified
+        })
+
+    if verified_files.__len__() != records.__len__():
+        return {'message': 'File hash does not match stored hash',
+                'data': files_verified_response
+                }
+    return {'message': 'File integrity verified',
+            'data': files_verified_response
+            }
 
 
 app.run(debug=True)
