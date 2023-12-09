@@ -472,10 +472,10 @@ def check_file():
         files_verified_response.append({
             'id': record[0],
             'uid': record[8],
-            'username':record[9],
-            'verification_start_time': f'{verification_start_time*1000} ms',
-            'verification_end_time': f'{verification_end_time*1000} ms',
-            'time_consumed': f'{(verification_end_time - verification_start_time)*1000} ms',
+            'username': record[9],
+            'verification_start_time': f'{verification_start_time * 1000} ms',
+            'verification_end_time': f'{verification_end_time * 1000} ms',
+            'time_consumed': f'{(verification_end_time - verification_start_time) * 1000} ms',
             'account_address': record[12],
             'file_contract': record[3],
             'user_contract': record[13],
@@ -483,14 +483,18 @@ def check_file():
         })
     overall_time_taken = time.time() - overall_time_taken
     if verified_files.__len__() != records.__len__():
-        return {'message': 'File hash does not match stored hash',
-                'overall_time_taken': f'{overall_time_taken*1000} ms',
+        return {
+                'message': 'Integrity report of all files',
+                'status': 'File hash does not match stored hash',
+                'overall_time_taken': f'{overall_time_taken * 1000} ms',
                 'data': files_verified_response
-                }
-    return {'message': 'File integrity verified',
-            'overall_time_taken': f'{overall_time_taken*1000} ms',
+         }
+    return {
+            'message': 'Integrity report of all files',
+            'status': 'File integrity verified',
+            'overall_time_taken': f'{overall_time_taken * 1000} ms',
             'data': files_verified_response
-            }
+        }
 
 
 app.run(debug=True)
