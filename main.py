@@ -1,21 +1,34 @@
+import os
 import sqlite3
 import time
 
 import hexbytes
+import solcx
+from ecdsa import SigningKey
 from flask import Flask, request
+from solcx import set_solc_version, compile_source
 from web3 import Web3
+from werkzeug.utils import secure_filename
 
+from DataStorage import DataStorage
 from FileContract import FileContract
 from LoginSignupContract import LoginSignupContract
+
+import shutil
+
 
 app = Flask(__name__)
 w3 = Web3(Web3.HTTPProvider("http://127.0.0.1:7545", request_kwargs={'timeout': 300}))
 
 file_contract = FileContract()
 login_signup_contract = LoginSignupContract()
+data_storage = DataStorage()
 
 app.config['UPLOAD_FOLDER'] = 'uploads/'
 app.config['PERMANENT_SESSION_LIFETIME'] = 6000
+app.config['FILE_CHUNKS'] = app.config['UPLOAD_FOLDER'] + 'chunks/'
+app.config['SIGNED_FILES'] = app.config['UPLOAD_FOLDER'] + 'signed_files/'
+app.config['USER_PRIVATE_KEYS'] = 'private_keys/'
 
 
 def connect_db():
@@ -42,6 +55,15 @@ def connect_db():
             CREATED_AT DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (UPLOADED_BY) REFERENCES USERS(USERNAME)
         );
+        
+    '''
+    '''
+    CREATE TABLE IF NOT EXISTS FILE_CHUNKS(
+        ID INTEGER PRIMARY KEY AUTOINCREMENT,
+        FILE_CHUNK_TRANSACTION_HASH TEXT NOT NULL,
+        FILE_CHUNK_CONTRACT_ADDRESS TEXT NOT NULL,
+        CREATED_AT DATETIME DEFAULT CURRENT_TIMESTAMP,
+        )
     '''
     conn.executescript(query)
     return conn
@@ -280,7 +302,7 @@ def upload_file():
             contract_compile_time = time.time()
             details, receipt, file_bytes = file_contract.upload_file_simple(uploaded_file=uploaded_file, w3=w3,
                                                                             record=record,
-                                                                            upload_folder=app.config['UPLOAD_FOLDER'])
+                                                                            upload_folder=app.config['FILE_CHUNKS'])
 
             # print(file_bytes)
             tx_hash = hexbytes.HexBytes(receipt['transactionHash'])
@@ -484,17 +506,114 @@ def check_file():
     overall_time_taken = time.time() - overall_time_taken
     if verified_files.__len__() != records.__len__():
         return {
-                'message': 'Integrity report of all files',
-                'status': 'File hash does not match stored hash',
-                'overall_time_taken': f'{overall_time_taken * 1000} ms',
-                'data': files_verified_response
-         }
-    return {
             'message': 'Integrity report of all files',
-            'status': 'File integrity verified',
+            'status': 'File hash does not match stored hash',
             'overall_time_taken': f'{overall_time_taken * 1000} ms',
             'data': files_verified_response
         }
+    return {
+        'message': 'Integrity report of all files',
+        'status': 'File integrity verified',
+        'overall_time_taken': f'{overall_time_taken * 1000} ms',
+        'data': files_verified_response
+    }
+
+
+@app.route('/upload_file_chunked', methods=['POST'])
+def upload_file_chunked():
+    # Check if 'file' is present in the request
+    if 'file' not in request.files:
+        return {'message': 'No file part in the request'}, 400
+
+    # Get the uploaded file from the request
+    uploaded_file = request.files['file']
+
+    # Check if a file was selected for uploading
+    if uploaded_file.filename == '':
+        return {'message': 'No file selected for uploading'}, 400
+
+    if 'chunkSize' not in request.form:
+        return {'message': 'No chunk size provided'}, 400
+
+    if uploaded_file:
+        response = ""
+
+        # Connect to the database
+        conn = connect_db()
+        cursor = conn.cursor()
+
+        # Fetch user information from the database based on the provided username
+        cursor.execute("SELECT * FROM USERS WHERE USERNAME=? ", (request.form['username'],))
+        records = cursor.fetchall()
+
+        # Check if exactly one record is found for the given username
+        if len(records) == 1:
+            record = records[0]
+
+            # Generate signing and verifying keys
+
+            with open(os.path.join(app.config['USER_PRIVATE_KEYS'], f"{record[0]}.pem"), "rb") as f:
+                sk = SigningKey.from_pem(f.read())
+            vk = sk.verifying_key
+
+            # Set the chunk size for file processing
+            chunk_size = int(request.form['chunkSize'])
+
+            # Save the uploaded file to the server
+            filename = secure_filename(uploaded_file.filename)
+            uploaded_file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
+
+            # Read the file in chunks and store in arrays
+            with open(os.path.join(app.config['UPLOAD_FOLDER'], filename), "rb") as file:
+                file_bytes = file.read()
+                file_bytes_array = [file_bytes[i:i + chunk_size] for i in range(0, len(file_bytes), chunk_size)]
+
+            file_chunks_folder_path = app.config['FILE_CHUNKS'] + f'{filename}/'
+            if not os.path.exists(file_chunks_folder_path):
+                os.mkdir(file_chunks_folder_path)
+            else:
+                shutil.rmtree(file_chunks_folder_path)
+                os.mkdir(file_chunks_folder_path)
+
+            signed_file_chunks_folder_path = app.config['SIGNED_FILES'] + f'{filename}/'
+            if not os.path.exists(signed_file_chunks_folder_path):
+                os.mkdir(signed_file_chunks_folder_path)
+            else:
+                shutil.rmtree(signed_file_chunks_folder_path)
+                os.mkdir(signed_file_chunks_folder_path)
+
+            # Process each file chunk
+            for i in range(0, len(file_bytes_array)):
+                # Write file chunk to disk
+                f = open(f'{file_chunks_folder_path}/{i}.txt', "w+")
+                f.write(f'{file_bytes_array[i]}')
+
+                # Sign the file chunk
+                signature = sk.sign(file_bytes_array[i])
+                with open(os.path.join(signed_file_chunks_folder_path, f'{i}.txt'), "wb") as file:
+                    file.write(signature)
+                receipt = data_storage.store_bytes(
+                    w3=w3,
+                    record=record,
+                    signature=signature
+                )
+
+                f.close()
+
+                f.close()
+
+                data_storage.retrieve_bytes(w3,record,signature, receipt['contractAddress'])
+                data_storage.verify(
+                    w3=w3,
+                    signature=signature,
+                    record=record,
+                    file_bytes_array=file_bytes_array,
+                    index=i,
+                    contract_address=receipt['contractAddress'],
+                    vk=vk)
+        else:
+            return {'message': 'USERNAME NOT FOUND'}
+        return response, 200
 
 
 app.run(debug=True)
