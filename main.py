@@ -1,21 +1,17 @@
 import os
+import shutil
 import sqlite3
 import time
 
 import hexbytes
-import solcx
-from ecdsa import SigningKey
+from ecdsa import SigningKey, VerifyingKey
 from flask import Flask, request
-from solcx import set_solc_version, compile_source
 from web3 import Web3
 from werkzeug.utils import secure_filename
 
 from DataStorage import DataStorage
 from FileContract import FileContract
 from LoginSignupContract import LoginSignupContract
-
-import shutil
-
 
 app = Flask(__name__)
 w3 = Web3(Web3.HTTPProvider("http://127.0.0.1:7545", request_kwargs={'timeout': 300}))
@@ -29,6 +25,9 @@ app.config['PERMANENT_SESSION_LIFETIME'] = 6000
 app.config['FILE_CHUNKS'] = app.config['UPLOAD_FOLDER'] + 'chunks/'
 app.config['SIGNED_FILES'] = app.config['UPLOAD_FOLDER'] + 'signed_files/'
 app.config['USER_PRIVATE_KEYS'] = 'private_keys/'
+app.config['USER_PUBLIC_KEYS'] = 'public_keys/'
+app.config['VERIFIABLE_FILES'] = app.config['UPLOAD_FOLDER'] + 'verifiable_files/'
+app.config['VERIFIABLE_SIGNED_FILES'] = app.config['UPLOAD_FOLDER'] + 'uploaded_signed_files/'
 
 
 def connect_db():
@@ -55,15 +54,12 @@ def connect_db():
             CREATED_AT DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (UPLOADED_BY) REFERENCES USERS(USERNAME)
         );
-        
-    '''
-    '''
-    CREATE TABLE IF NOT EXISTS FILE_CHUNKS(
-        ID INTEGER PRIMARY KEY AUTOINCREMENT,
-        FILE_CHUNK_TRANSACTION_HASH TEXT NOT NULL,
-        FILE_CHUNK_CONTRACT_ADDRESS TEXT NOT NULL,
-        CREATED_AT DATETIME DEFAULT CURRENT_TIMESTAMP,
-        )
+   CREATE TABLE IF NOT EXISTS DATA_STORAGE(
+            ID INTEGER PRIMARY KEY AUTOINCREMENT,
+            FILE_CHUNK_CONTRACT_ADDRESS TEXT NOT NULL,
+            CREATED_AT DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UPLOADED_BY TEXT NOT NULL
+        ); 
     '''
     conn.executescript(query)
     return conn
@@ -519,6 +515,80 @@ def check_file():
     }
 
 
+def get_user_into(username):
+    conn = connect_db()
+    cursor = conn.cursor()
+    # Fetch user information from the database based on the provided username
+    cursor.execute("SELECT * FROM USERS WHERE USERNAME=? ", (username,))
+    records = cursor.fetchall()
+    cursor.close()
+    return records
+
+
+def mine_block(w3, record):
+    conn = connect_db()
+    cursor = conn.cursor()
+    receipt = data_storage.create_block(w3, record)
+    cursor.execute("INSERT INTO DATA_STORAGE(FILE_CHUNK_CONTRACT_ADDRESS, UPLOADED_BY) VALUES (?,?)",
+                   (receipt['contractAddress'], record[1],))
+    conn.commit()
+
+
+def get_user_data_storage_info():
+    conn = connect_db()
+    cursor = conn.cursor()
+    cursor.execute('SELECT * FROM DATA_STORAGE WHERE UPLOADED_BY=?', (request.form['username'],))
+    records2 = cursor.fetchall()
+    cursor.close()
+    return records2
+
+
+def make_folder_and_clear_existing(file_chunks_folder_path):
+    if not os.path.exists(file_chunks_folder_path):
+        os.mkdir(file_chunks_folder_path)
+    else:
+        shutil.rmtree(file_chunks_folder_path)
+        os.mkdir(file_chunks_folder_path)
+
+
+def create_file_chunks(uploaded_file, chunk_size, filename):
+    uploaded_file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
+
+    # Read the file in chunks and store in arrays
+    with open(os.path.join(app.config['UPLOAD_FOLDER'], filename), "rb") as file:
+        file_bytes = file.read()
+        file_bytes_array = [file_bytes[i:i + chunk_size] for i in range(0, len(file_bytes), chunk_size)]
+    return file_bytes_array
+
+
+def write_file_data(file_bytes_array, file_chunks_folder_path, record, record2, sk, filename):
+    signed_file_chunks_folder_path = app.config['SIGNED_FILES'] + f'{filename}/'
+    if not os.path.exists(signed_file_chunks_folder_path):
+        os.mkdir(signed_file_chunks_folder_path)
+    else:
+        shutil.rmtree(signed_file_chunks_folder_path)
+        os.mkdir(signed_file_chunks_folder_path)
+    for i in range(0, len(file_bytes_array)):
+        # Write file chunk to disk
+        with open(f'{file_chunks_folder_path}/{i}.bin', "wb") as f:
+            f.write(file_bytes_array[i])
+
+        # Sign the file chunk
+        signature = sk.sign(file_bytes_array[i])
+
+        with open(os.path.join(signed_file_chunks_folder_path, f'{i}.bin'), "wb") as file:
+            file.write(signature)
+
+        data_storage.store_bytes(w3=w3, contract_address=record2[1], tx_from=record[4], signature=signature)
+        data_storage.retrieve_bytes(w3, record, signature, contract_address=record2[1])
+        result = data_storage.verify(
+            w3=w3, signature=signature, record=record, file_bytes_array=file_bytes_array,
+            index=i, contract_address=record2[1], vk=sk.verifying_key
+        )
+
+        print(result)
+
+
 @app.route('/upload_file_chunked', methods=['POST'])
 def upload_file_chunked():
     # Check if 'file' is present in the request
@@ -537,83 +607,128 @@ def upload_file_chunked():
 
     if uploaded_file:
         response = ""
+        records = get_user_into(request.form['username'])
 
-        # Connect to the database
-        conn = connect_db()
-        cursor = conn.cursor()
-
-        # Fetch user information from the database based on the provided username
-        cursor.execute("SELECT * FROM USERS WHERE USERNAME=? ", (request.form['username'],))
-        records = cursor.fetchall()
-
-        # Check if exactly one record is found for the given username
         if len(records) == 1:
             record = records[0]
-
+            records2 = get_user_data_storage_info()
+            if len(records2) < 1:
+                mine_block(w3, record)
+                records2 = get_user_data_storage_info()
+            record2 = records2[0]
             # Generate signing and verifying keys
+            if os.path.exists(os.path.join(app.config['USER_PRIVATE_KEYS'], f"{record[0]}.pem")):
+                private_key_path = os.path.join(app.config['USER_PRIVATE_KEYS'], f"{record[0]}.pem")
+            if os.path.exists(os.path.join(app.config['USER_PUBLIC_KEYS'], f"{record[0]}.pem")):
+                public_key_path = os.path.join(app.config['USER_PUBLIC_KEYS'], f"{record[0]}.pem")
 
-            with open(os.path.join(app.config['USER_PRIVATE_KEYS'], f"{record[0]}.pem"), "rb") as f:
-                sk = SigningKey.from_pem(f.read())
-            vk = sk.verifying_key
-
-            # Set the chunk size for file processing
+                with open(private_key_path, "rb") as f:
+                    file_bytes = f.read()
+                    file_str = file_bytes.decode('utf-8')
+                    sk = SigningKey.from_pem(file_str)
+                with open(public_key_path, "rb") as f:
+                    file_bytes = f.read()
+                    file_str = file_bytes.decode('utf-8')
+                sk.verifying_key = VerifyingKey.from_pem(file_str)
+            else:
+                sk = SigningKey.generate()
+                with open(os.path.join(app.config['USER_PRIVATE_KEYS'], f'{record[0]}.pem'), "wb") as f:
+                    f.write(sk.to_pem())
+                with open(os.path.join(app.config['USER_PUBLIC_KEYS'], f'{record[0]}.pem'), "wb") as f:
+                    f.write(sk.verifying_key.to_pem())
             chunk_size = int(request.form['chunkSize'])
 
-            # Save the uploaded file to the server
             filename = secure_filename(uploaded_file.filename)
-            uploaded_file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
-
-            # Read the file in chunks and store in arrays
-            with open(os.path.join(app.config['UPLOAD_FOLDER'], filename), "rb") as file:
-                file_bytes = file.read()
-                file_bytes_array = [file_bytes[i:i + chunk_size] for i in range(0, len(file_bytes), chunk_size)]
-
+            file_bytes_array = create_file_chunks(uploaded_file=uploaded_file, chunk_size=chunk_size, filename=filename)
             file_chunks_folder_path = app.config['FILE_CHUNKS'] + f'{filename}/'
-            if not os.path.exists(file_chunks_folder_path):
-                os.mkdir(file_chunks_folder_path)
-            else:
-                shutil.rmtree(file_chunks_folder_path)
-                os.mkdir(file_chunks_folder_path)
-
-            signed_file_chunks_folder_path = app.config['SIGNED_FILES'] + f'{filename}/'
-            if not os.path.exists(signed_file_chunks_folder_path):
-                os.mkdir(signed_file_chunks_folder_path)
-            else:
-                shutil.rmtree(signed_file_chunks_folder_path)
-                os.mkdir(signed_file_chunks_folder_path)
+            make_folder_and_clear_existing(file_chunks_folder_path=file_chunks_folder_path)
 
             # Process each file chunk
-            for i in range(0, len(file_bytes_array)):
-                # Write file chunk to disk
-                f = open(f'{file_chunks_folder_path}/{i}.txt', "w+")
-                f.write(f'{file_bytes_array[i]}')
-
-                # Sign the file chunk
-                signature = sk.sign(file_bytes_array[i])
-                with open(os.path.join(signed_file_chunks_folder_path, f'{i}.txt'), "wb") as file:
-                    file.write(signature)
-                receipt = data_storage.store_bytes(
-                    w3=w3,
-                    record=record,
-                    signature=signature
-                )
-
-                f.close()
-
-                f.close()
-
-                data_storage.retrieve_bytes(w3,record,signature, receipt['contractAddress'])
-                data_storage.verify(
-                    w3=w3,
-                    signature=signature,
-                    record=record,
-                    file_bytes_array=file_bytes_array,
-                    index=i,
-                    contract_address=receipt['contractAddress'],
-                    vk=vk)
+            write_file_data(
+                file_bytes_array=file_bytes_array,
+                file_chunks_folder_path=file_chunks_folder_path,
+                record=record,
+                record2=record2,
+                sk=sk,
+                filename=filename
+            )
         else:
             return {'message': 'USERNAME NOT FOUND'}
         return response, 200
 
 
-app.run(debug=True)
+def get_signing_key(record):
+    private_key_path = os.path.join(app.config['USER_PRIVATE_KEYS'], f"{record[0]}.pem")
+    with open(private_key_path, "r") as f:
+        file_bytes = f.read()
+        sk = SigningKey.from_pem(file_bytes)
+    public_key_path = os.path.join(app.config['USER_PUBLIC_KEYS'], f"{record[0]}.pem")
+    with open(public_key_path, "r") as f:
+        file_bytes = f.read()
+        sk.verifying_key = VerifyingKey.from_pem(file_bytes)
+    return sk
+
+
+def save_uploaded_files(uploaded_file, uploaded_signed_file):
+    uploaded_filename = secure_filename(uploaded_file.filename)
+    verifiable_uploaded_file_path = os.path.join(app.config['VERIFIABLE_FILES'], uploaded_filename)
+    uploaded_file.save(verifiable_uploaded_file_path)
+    uploaded_signed_filename = secure_filename(uploaded_signed_file.filename)
+    uploaded_signed_file_path = os.path.join(app.config['VERIFIABLE_SIGNED_FILES'], uploaded_signed_filename)
+    uploaded_signed_file.save(uploaded_signed_file_path)
+    return verifiable_uploaded_file_path, uploaded_signed_file_path
+
+
+@app.route('/verify_file_chunk', methods=['POST'])
+def verify_file_chunk():
+    if 'file' not in request.files:
+        return {'message': 'No file part in the request'}, 400
+
+    # Get the uploaded file from the request
+    uploaded_file = request.files['file']
+
+    # Check if a file was selected for uploading
+    if uploaded_file.filename == '':
+        return {'message': 'No file selected for uploading'}, 400
+
+    if 'file' not in request.files:
+        return {'message': 'No file part in the request'}, 400
+
+        # Get the uploaded file from the request
+    uploaded_signed_file = request.files['signed_file']
+
+    # Check if a file was selected for uploading
+    if uploaded_signed_file.filename == '':
+        return {'message': 'No file selected for uploading'}, 400
+    records = get_user_into(request.form['username'])
+    if len(records) == 1:
+        record = records[0]
+        records2 = get_user_data_storage_info()
+        record2 = records2[0]
+        # Generate signing and verifying keys
+        verifiable_uploaded_file_path, uploaded_signed_file_path = save_uploaded_files(
+            uploaded_file=uploaded_file,
+            uploaded_signed_file=uploaded_signed_file
+        )
+
+        if os.path.exists(os.path.join(app.config['USER_PRIVATE_KEYS'], f"{record[0]}.pem")) and \
+                os.path.exists(os.path.join(app.config['USER_PUBLIC_KEYS'], f"{record[0]}.pem")):
+            sk = get_signing_key(record=record)
+        else:
+            return {'message': 'UNABLE TO GET SIGNATURE.'}, 400
+        with open(verifiable_uploaded_file_path, "rb") as f:
+            readable = f.read()
+
+        with open(uploaded_signed_file_path, "rb") as f:
+            data = f.read()
+            # print(sk.verifying_key.verify(signature=data, data=readable))
+        retrieved_bytes = data_storage.retrieve_bytes(w3, record, data, contract_address=record2[1])
+        result = sk.verifying_key.verify(signature=retrieved_bytes, data=readable)
+
+        result2 = sk.verifying_key.verify(signature=data, data=readable)
+        print(result2)
+        print(result)
+    return str(result)
+
+
+app.run(debug=True, port=5001)
