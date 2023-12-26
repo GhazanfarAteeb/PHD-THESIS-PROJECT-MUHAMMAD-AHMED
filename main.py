@@ -29,6 +29,34 @@ app.config['USER_PUBLIC_KEYS'] = 'public_keys/'
 app.config['VERIFIABLE_FILES'] = app.config['UPLOAD_FOLDER'] + 'verifiable_files/'
 app.config['VERIFIABLE_SIGNED_FILES'] = app.config['UPLOAD_FOLDER'] + 'uploaded_signed_files/'
 
+if not os.path.exists(path=app.config['UPLOAD_FOLDER']):
+    os.mkdir(app.config['UPLOAD_FOLDER'])
+    print(f"CREATED FOLDER ==>{app.config['UPLOAD_FOLDER']}")
+
+if not os.path.exists(path=app.config['FILE_CHUNKS']):
+    os.mkdir(app.config['FILE_CHUNKS'])
+    print(f"CREATED FOLDER ==>{app.config['FILE_CHUNKS']}")
+
+if not os.path.exists(path=app.config['SIGNED_FILES']):
+    os.mkdir(app.config['SIGNED_FILES'])
+    print(f"CREATED FOLDER ==>{app.config['SIGNED_FILES']}")
+
+if not os.path.exists(path=app.config['USER_PRIVATE_KEYS']):
+    os.mkdir(app.config['USER_PRIVATE_KEYS'])
+    print(f"CREATED FOLDER ==>{app.config['USER_PRIVATE_KEYS']}")
+
+if not os.path.exists(path=app.config['USER_PUBLIC_KEYS']):
+    os.mkdir(app.config['USER_PUBLIC_KEYS'])
+    print(f"CREATED FOLDER ==>{app.config['USER_PUBLIC_KEYS']}")
+
+if not os.path.exists(path=app.config['VERIFIABLE_FILES']):
+    os.mkdir(app.config['VERIFIABLE_FILES'])
+    print(f"CREATED FOLDER ==>{app.config['VERIFIABLE_FILES']}")
+
+if not os.path.exists(path=app.config['VERIFIABLE_SIGNED_FILES']):
+    os.mkdir(app.config['VERIFIABLE_SIGNED_FILES'])
+    print(f"CREATED FOLDER ==>{app.config['VERIFIABLE_SIGNED_FILES']}")
+
 
 def connect_db():
     conn = sqlite3.connect("users.db")
@@ -721,13 +749,11 @@ def verify_file_chunk():
 
         with open(uploaded_signed_file_path, "rb") as f:
             data = f.read()
-            # print(sk.verifying_key.verify(signature=data, data=readable))
         retrieved_bytes = data_storage.retrieve_bytes(w3, record, data, contract_address=record2[1])
         result = sk.verifying_key.verify(signature=retrieved_bytes, data=readable)
 
         result2 = sk.verifying_key.verify(signature=data, data=readable)
-        print(result2)
-        print(result)
+
     return str(result and result2)
 
 
