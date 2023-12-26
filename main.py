@@ -728,7 +728,7 @@ def verify_file_chunk():
         result2 = sk.verifying_key.verify(signature=data, data=readable)
         print(result2)
         print(result)
-    return str(result)
+    return str(result and result2)
 
 
 app.run(debug=True, port=5001)
