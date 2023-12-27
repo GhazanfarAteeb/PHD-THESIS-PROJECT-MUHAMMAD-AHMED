@@ -560,6 +560,7 @@ def mine_block(w3, record):
     cursor.execute("INSERT INTO DATA_STORAGE(FILE_CHUNK_CONTRACT_ADDRESS, UPLOADED_BY) VALUES (?,?)",
                    (receipt['contractAddress'], record[1],))
     conn.commit()
+    return receipt
 
 
 def get_user_data_storage_info():
@@ -596,6 +597,7 @@ def write_file_data(file_bytes_array, file_chunks_folder_path, record, record2, 
     else:
         shutil.rmtree(signed_file_chunks_folder_path)
         os.mkdir(signed_file_chunks_folder_path)
+    data = []
     for i in range(0, len(file_bytes_array)):
         # Write file chunk to disk
         with open(f'{file_chunks_folder_path}/{i}.bin', "wb") as f:
@@ -607,14 +609,21 @@ def write_file_data(file_bytes_array, file_chunks_folder_path, record, record2, 
         with open(os.path.join(signed_file_chunks_folder_path, f'{i}.bin'), "wb") as file:
             file.write(signature)
 
-        data_storage.store_bytes(w3=w3, contract_address=record2[1], tx_from=record[4], signature=signature)
-        data_storage.retrieve_bytes(w3, record, signature, contract_address=record2[1])
-        result = data_storage.verify(
-            w3=w3, signature=signature, record=record, file_bytes_array=file_bytes_array,
-            index=i, contract_address=record2[1], vk=sk.verifying_key
+        mining_start_time, mining_end_time = data_storage.store_bytes(
+            w3=w3,
+            contract_address=record2[1],
+            tx_from=record[4],
+            signature=signature
         )
-
-        print(result)
+        data.append(
+            {
+                'chunk_number': i + 1,
+                'chunk_mine_start_time': mining_start_time * 1000,
+                'chunk_mine_end_time': mining_end_time * 1000,
+                'chunk_mine_time_taken': f'{(mining_end_time - mining_start_time) * 1000} ms'
+            }
+        )
+    return data
 
 
 @app.route('/upload_file_chunked', methods=['POST'])
@@ -634,20 +643,18 @@ def upload_file_chunked():
         return {'message': 'No chunk size provided'}, 400
 
     if uploaded_file:
-        response = ""
         records = get_user_into(request.form['username'])
-
         if len(records) == 1:
             record = records[0]
             records2 = get_user_data_storage_info()
             if len(records2) < 1:
-                mine_block(w3, record)
+                receipt = mine_block(w3, record)
                 records2 = get_user_data_storage_info()
             record2 = records2[0]
             # Generate signing and verifying keys
-            if os.path.exists(os.path.join(app.config['USER_PRIVATE_KEYS'], f"{record[0]}.pem")):
+            if os.path.exists(os.path.join(app.config['USER_PRIVATE_KEYS'], f"{record[0]}.pem")) and \
+                    os.path.exists(os.path.join(app.config['USER_PUBLIC_KEYS'], f"{record[0]}.pem")):
                 private_key_path = os.path.join(app.config['USER_PRIVATE_KEYS'], f"{record[0]}.pem")
-            if os.path.exists(os.path.join(app.config['USER_PUBLIC_KEYS'], f"{record[0]}.pem")):
                 public_key_path = os.path.join(app.config['USER_PUBLIC_KEYS'], f"{record[0]}.pem")
 
                 with open(private_key_path, "rb") as f:
@@ -672,7 +679,7 @@ def upload_file_chunked():
             make_folder_and_clear_existing(file_chunks_folder_path=file_chunks_folder_path)
 
             # Process each file chunk
-            write_file_data(
+            data = write_file_data(
                 file_bytes_array=file_bytes_array,
                 file_chunks_folder_path=file_chunks_folder_path,
                 record=record,
@@ -680,6 +687,31 @@ def upload_file_chunked():
                 sk=sk,
                 filename=filename
             )
+            is_block_created = data_storage.is_block_created()
+            contract_compiling_start_time, contract_compiling_end_time = data_storage.get_contract_compiling_time()
+            response = {
+                'uid': record[0],
+                'account_address': record[4],
+                'contract_compiling_start_time': contract_compiling_start_time * 1000,
+                'contract_compiling_end_time': contract_compiling_end_time * 1000,
+                'contract_compiling_time_taken': (contract_compiling_end_time - contract_compiling_start_time) * 1000,
+                'is_block_created': str(is_block_created),
+                'chunk_size': str(chunk_size),
+                'total_chunks': str(file_bytes_array.__len__()),
+                'data': data,
+            }
+            if is_block_created:
+                block_creation_start_time, block_creation_end_time = data_storage.get_block_creation_time()
+                response.update({
+                    'block_creation_start_time': block_creation_start_time,
+                    'block_creation_end_time': block_creation_end_time,
+                    'block_creation_time_taken': f'{(block_creation_end_time - block_creation_start_time) * 1000} ms',
+                    'from': receipt['from'],
+                    'cumulative_gas_used': receipt['cumulativeGasUsed'],
+                    'gas_used': receipt['gasUsed'],
+                    'transaction_hash': hexbytes.HexBytes(receipt['transactionHash']).hex().__str__(),
+                })
+
         else:
             return {'message': 'USERNAME NOT FOUND'}
         return response, 200
@@ -730,6 +762,7 @@ def verify_file_chunk():
         return {'message': 'No file selected for uploading'}, 400
     records = get_user_into(request.form['username'])
     if len(records) == 1:
+        start_time = time.time()
         record = records[0]
         records2 = get_user_data_storage_info()
         record2 = records2[0]
@@ -753,8 +786,27 @@ def verify_file_chunk():
         result = sk.verifying_key.verify(signature=retrieved_bytes, data=readable)
 
         result2 = sk.verifying_key.verify(signature=data, data=readable)
+        end_time = time.time()
+        response = {
+            'uid': record[0],
+            'from': record[4],
+            'contract_address': record2[1],
+            'validity_from_blockchain': str(result),
+            'validity_from_chunk_file': str(result2),
+            'start_time': start_time,
+            'end_time': end_time,
+            'total_time_taken': f'{(end_time - start_time) * 1000}',
 
-    return str(result and result2)
+        }
+        if result and result2:
+            response.update({
+                'message': 'Data integrity verified'
+            })
+    else:
+        response = {
+            'message': 'no record found'
+        }
+    return response, 200
 
 
-app.run(debug=True, port=5001)
+app.run()
